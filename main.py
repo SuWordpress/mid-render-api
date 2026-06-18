@@ -9,8 +9,7 @@ from fastapi.responses import FileResponse, Response
 
 from mido import MidiFile, MidiTrack, Message
 
-import pikepdf
-from pikepdf import Name, Array
+import fitz  # PyMuPDF
 
 app = FastAPI()
 
@@ -155,48 +154,20 @@ def root():
     return {"ok": True, "service": "midi-render-api"}
 
 
-def sanitize_pdf_bytes(data: bytes) -> bytes:
+def sanitize_pdf_bytes(data: bytes, dpi: int = 200) -> bytes:
     """
-    Strip active content that some OMR services reject (launch actions,
-    embedded JavaScript, auto-run actions, hyperlinks). OMR reads the visual
-    notation only, so this does not affect the conversion result.
+    Rebuild the PDF as image-only pages (rasterize). This guarantees the file
+    carries no launch actions, JavaScript, links, or any active content that an
+    OMR service's security scanner could reject. OMR reads the visual notation,
+    so image-only input does not affect the conversion result.
     """
-    pdf = pikepdf.open(io.BytesIO(data))
-    root = pdf.Root
-
-    # Document-level auto-run actions
-    for k in ("/OpenAction", "/AA"):
-        if k in root:
-            del root[k]
-
-    # Embedded JavaScript / embedded files (name trees)
-    if "/Names" in root:
-        for k in ("/JavaScript", "/EmbeddedFiles"):
-            if k in root.Names:
-                del root.Names[k]
-
-    # Forms can carry JS / XFA
-    if "/AcroForm" in root:
-        del root["/AcroForm"]
-
-    # Per-page actions + dangerous annotations (links / launch / js)
-    for page in pdf.pages:
-        if "/AA" in page:
-            del page["/AA"]
-        if "/Annots" in page:
-            kept = [a for a in page.Annots if a.get("/Subtype") != Name("/Link")]
-            for a in kept:
-                for ak in ("/A", "/AA"):
-                    if ak in a:
-                        del a[ak]
-            if kept:
-                page.Annots = Array(kept)
-            else:
-                del page["/Annots"]
-
-    out = io.BytesIO()
-    pdf.save(out, fix_metadata_version=True)
-    return out.getvalue()
+    src = fitz.open(stream=data, filetype="pdf")
+    out = fitz.open()
+    for page in src:
+        pix = page.get_pixmap(dpi=dpi)
+        pg = out.new_page(width=pix.width, height=pix.height)
+        pg.insert_image(fitz.Rect(0, 0, pix.width, pix.height), pixmap=pix)
+    return out.tobytes(deflate=True, garbage=4)
 
 
 @app.post("/sanitize")
