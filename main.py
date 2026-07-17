@@ -154,7 +154,7 @@ def root():
     return {"ok": True, "service": "midi-render-api"}
 
 
-def sanitize_pdf_bytes(data: bytes, dpi: int = 200) -> bytes:
+def sanitize_pdf_bytes(data: bytes, dpi: int = 300) -> bytes:
     """
     Rebuild the PDF as image-only pages (rasterize). This guarantees the file
     carries no launch actions, JavaScript, links, or any active content that an
